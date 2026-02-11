@@ -12,6 +12,8 @@
 //!
 //! This stub allows the code to compile and demonstrates the architecture.
 
+#![allow(unused)]
+
 use super::Credentials;
 
 /// Minimal SSPI context for Kerberos/NTLM authentication.

@@ -314,6 +314,7 @@ pub(crate) enum Kind {
     Decode,
     Upgrade,
     #[cfg(feature = "negotiate")]
+    #[allow(dead_code)]
     Negotiate,
 }
 
@@ -336,6 +337,7 @@ pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
 }
 
 #[cfg(feature = "negotiate")]
+#[allow(dead_code)]
 pub(crate) fn negotiate<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Negotiate, Some(e))
 }

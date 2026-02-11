@@ -261,6 +261,8 @@ compile_error!(
 // Used in many features that they're not worth making it optional.
 use futures_core as _;
 use sync_wrapper as _;
+#[cfg(all(windows, feature = "negotiate"))]
+use windows as _;
 
 macro_rules! if_wasm {
     ($($item:item)*) => {$(

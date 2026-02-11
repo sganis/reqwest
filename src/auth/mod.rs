@@ -5,6 +5,8 @@
 //! This module provides Windows SSPI-based authentication with automatic fallback
 //! to Basic authentication when explicit credentials are provided.
 
+#![allow(unused)]
+
 #[cfg(all(windows, feature = "negotiate"))]
 mod sspi;
 

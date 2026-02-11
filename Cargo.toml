@@ -76,6 +76,11 @@ socks = []
 # Kerberos/SPNEGO "Negotiate" authentication (Windows only)
 negotiate = ["dep:windows"]
 
+# Backend selection for negotiate testing
+backend-curl = ["dep:curl"]
+backend-reqwest = ["negotiate", "json", "default-tls"]
+default-backend = ["backend-reqwest"]
+
 # Use the system's proxy configuration.
 system-proxy = ["hyper-util/client-proxy-system"]
 
@@ -170,6 +175,9 @@ windows = { version = "0.59", optional = true, features = [
     "Win32_Security_Credentials",
     "Win32_Foundation",
 ]}
+
+# Backend testing - curl for comparison
+curl = { version = "0.4", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 env_logger = "0.10"
@@ -266,6 +274,10 @@ path = "examples/connect_via_lower_priority_tokio_runtime.rs"
 name = "negotiate_ad"
 path = "examples/negotiate_ad.rs"
 required-features = ["negotiate", "json"]
+
+[[example]]
+name = "test_negotiate"
+path = "examples/test_negotiate.rs"
 
 [[test]]
 name = "blocking"

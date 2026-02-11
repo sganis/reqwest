@@ -5,6 +5,8 @@
 //! Implements the HTTP "Negotiate" authentication scheme (RFC 4559) with automatic
 //! fallback to NTLM and Basic authentication when Kerberos/SSPI is unavailable.
 
+#![allow(unused)]
+
 use super::Credentials;
 use crate::{Client, Request, Response, Result};
 use http::{HeaderMap, HeaderValue};

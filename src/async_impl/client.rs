@@ -2672,23 +2672,18 @@ impl Client {
         &self,
         request: Request,
     ) -> impl Future<Output = Result<Response, crate::Error>> {
-        let negotiate_config = {
-            #[cfg(feature = "negotiate")]
-            {
-                self.inner.negotiate_config.clone()
-            }
-            #[cfg(not(feature = "negotiate"))]
-            {
-                None
-            }
-        };
+        #[cfg(feature = "negotiate")]
+        let negotiate_config = self.inner.negotiate_config.clone();
+
+        #[cfg(not(feature = "negotiate"))]
+        let negotiate_config: Option<()> = None;
 
         let pending = self.execute_request(request);
 
         async move {
             #[cfg(feature = "negotiate")]
             {
-                if let Some(config) = negotiate_config {
+                if let Some(_config) = negotiate_config {
                     // Negotiate is enabled - but we need to integrate this differently
                     // For now, just return the pending result
                     // TODO: Properly integrate negotiate authentication
