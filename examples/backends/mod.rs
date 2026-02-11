@@ -6,10 +6,10 @@
 //! - curl backend (using libcurl's mature SSPI/GSS-Negotiate support)
 //! - reqwest backend (using our custom negotiate implementation)
 
-#[cfg(feature = "backend-curl")]
+#[cfg(feature = "curl")]
 pub mod curl_backend;
 
-#[cfg(feature = "backend-reqwest")]
+#[cfg(feature = "reqwest")]
 pub mod reqwest_backend;
 
 use std::collections::HashMap;
@@ -145,18 +145,19 @@ pub trait HttpBackend {
 
 /// Get the active backend based on compile-time features
 pub fn get_backend() -> Box<dyn HttpBackend> {
-    #[cfg(feature = "backend-curl")]
+    #[cfg(feature = "curl")]
     {
         Box::new(curl_backend::CurlBackend::new())
     }
 
-    #[cfg(all(feature = "backend-reqwest", not(feature = "backend-curl")))]
+    #[cfg(all(feature = "reqwest", not(feature = "curl")))]
     {
         Box::new(reqwest_backend::ReqwestBackend::new())
     }
 
-    #[cfg(all(not(feature = "backend-curl"), not(feature = "backend-reqwest")))]
+    #[cfg(all(not(feature = "curl"), not(feature = "reqwest")))]
     {
-        compile_error!("Either backend-curl or backend-reqwest feature must be enabled");
+        compile_error!("Either curl or reqwest feature must be enabled");
+        unreachable!()
     }
 }

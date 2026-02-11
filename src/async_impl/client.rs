@@ -2675,9 +2675,6 @@ impl Client {
         #[cfg(feature = "negotiate")]
         let negotiate_config = self.inner.negotiate_config.clone();
 
-        #[cfg(not(feature = "negotiate"))]
-        let negotiate_config: Option<()> = None;
-
         let pending = self.execute_request(request);
 
         async move {
