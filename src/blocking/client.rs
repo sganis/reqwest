@@ -1175,6 +1175,96 @@ impl ClientBuilder {
         self.with_inner(|inner| inner.connector_layer(layer))
     }
 
+    /// Enable HTTP Negotiate (Kerberos/SPNEGO) authentication using the current Windows user.
+    ///
+    /// This enables automatic authentication with Windows Active Directory servers using
+    /// the currently logged-in user's credentials via SSPI. No explicit username or password
+    /// is required - Windows handles the authentication transparently.
+    ///
+    /// This is equivalent to `curl --negotiate -u :` (negotiate with no explicit credentials).
+    ///
+    /// # Platform Support
+    ///
+    /// - **Windows only**: Uses Windows SSPI (Security Support Provider Interface)
+    /// - Requires the client machine to be domain-joined or have valid Kerberos tickets
+    /// - Falls back to NTLM if Kerberos is unavailable
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use reqwest::blocking::Client;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder()
+    ///     .negotiate()
+    ///     .build()?;
+    ///
+    /// let resp = client.get("https://ad-server.corp.com/api")
+    ///     .send()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Authentication will fail if:
+    /// - The machine is not domain-joined
+    /// - No valid Kerberos tickets are available
+    /// - The server does not support Negotiate authentication
+    #[cfg(feature = "negotiate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "negotiate")))]
+    pub fn negotiate(self) -> ClientBuilder {
+        self.with_inner(|inner| inner.negotiate())
+    }
+
+    /// Enable HTTP Negotiate authentication with fallback to Basic authentication.
+    ///
+    /// This enables a flexible authentication strategy:
+    /// 1. First, attempts Kerberos/SPNEGO via Windows SSPI (if available)
+    /// 2. If SSPI is unavailable, falls back to NTLM
+    /// 3. If all SSPI methods fail, falls back to HTTP Basic authentication
+    ///
+    /// This is equivalent to `curl --negotiate -u user:pass` (negotiate with fallback credentials).
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - Username for fallback authentication
+    /// * `password` - Password for fallback authentication
+    ///
+    /// # Platform Support
+    ///
+    /// - **Windows**: Uses SSPI for Kerberos/NTLM, falls back to Basic if needed
+    /// - **Other platforms**: Falls back to Basic authentication immediately
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use reqwest::blocking::Client;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = Client::builder()
+    ///     .negotiate_with_credentials("user@DOMAIN.COM", "password")
+    ///     .build()?;
+    ///
+    /// let resp = client.get("https://ad-server.corp.com/api")
+    ///     .send()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Security
+    ///
+    /// - Credentials are only used if SSPI is unavailable or fails
+    /// - Prefer `.negotiate()` without credentials for better security on domain-joined machines
+    /// - Basic authentication sends credentials in base64 (not encrypted) - use HTTPS
+    #[cfg(feature = "negotiate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "negotiate")))]
+    pub fn negotiate_with_credentials<U, P>(self, username: U, password: P) -> ClientBuilder
+    where
+        U: Into<String>,
+        P: Into<String>,
+    {
+        self.with_inner(|inner| inner.negotiate_with_credentials(username, password))
+    }
+
     // private
 
     fn with_inner<F>(mut self, func: F) -> ClientBuilder

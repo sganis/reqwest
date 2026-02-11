@@ -142,6 +142,13 @@ impl Error {
         matches!(self.inner.kind, Kind::Request)
     }
 
+    /// Returns true if the error is related to Negotiate authentication.
+    #[cfg(feature = "negotiate")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "negotiate")))]
+    pub fn is_negotiate(&self) -> bool {
+        matches!(self.inner.kind, Kind::Negotiate)
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     /// Returns true if the error is related to connect
     pub fn is_connect(&self) -> bool {
@@ -233,6 +240,8 @@ impl fmt::Display for Error {
             Kind::Decode => f.write_str("error decoding response body")?,
             Kind::Redirect => f.write_str("error following redirect")?,
             Kind::Upgrade => f.write_str("error upgrading connection")?,
+            #[cfg(feature = "negotiate")]
+            Kind::Negotiate => f.write_str("negotiate authentication error")?,
             #[cfg(target_arch = "wasm32")]
             Kind::Status(ref code) => {
                 let prefix = if code.is_client_error() {
@@ -304,6 +313,8 @@ pub(crate) enum Kind {
     Body,
     Decode,
     Upgrade,
+    #[cfg(feature = "negotiate")]
+    Negotiate,
 }
 
 // constructors
@@ -322,6 +333,11 @@ pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
 
 pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Request, Some(e))
+}
+
+#[cfg(feature = "negotiate")]
+pub(crate) fn negotiate<E: Into<BoxError>>(e: E) -> Error {
+    Error::new(Kind::Negotiate, Some(e))
 }
 
 pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {

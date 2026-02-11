@@ -370,6 +370,8 @@ if_hyper! {
 
 
     mod async_impl;
+    #[cfg(feature = "negotiate")]
+    pub(crate) mod auth;
     #[cfg(feature = "blocking")]
     pub mod blocking;
     mod connect;

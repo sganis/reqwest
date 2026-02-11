@@ -73,6 +73,9 @@ stream = ["tokio/fs", "dep:futures-util", "dep:tokio-util", "dep:wasm-streams"]
 
 socks = []
 
+# Kerberos/SPNEGO "Negotiate" authentication (Windows only)
+negotiate = ["dep:windows"]
+
 # Use the system's proxy configuration.
 system-proxy = ["hyper-util/client-proxy-system"]
 
@@ -159,6 +162,14 @@ h3 = { version = "0.0.8", optional = true }
 h3-quinn = { version = "0.0.10", optional = true }
 quinn = { version = "0.11.1", default-features = false, features = ["runtime-tokio"], optional = true }
 futures-channel = { version = "0.3", optional = true }
+
+# Windows SSPI for Kerberos/SPNEGO authentication
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.59", optional = true, features = [
+    "Win32_Security_Authentication_Identity",
+    "Win32_Security_Credentials",
+    "Win32_Foundation",
+]}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 env_logger = "0.10"
@@ -250,6 +261,11 @@ required-features = ["http3", "rustls"]
 [[example]]
 name = "connect_via_lower_priority_tokio_runtime"
 path = "examples/connect_via_lower_priority_tokio_runtime.rs"
+
+[[example]]
+name = "negotiate_ad"
+path = "examples/negotiate_ad.rs"
+required-features = ["negotiate", "json"]
 
 [[test]]
 name = "blocking"
