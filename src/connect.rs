@@ -798,15 +798,68 @@ impl ConnectorService {
         #[cfg(feature = "__tls")]
         let misc = proxy.custom_headers().clone();
 
+        #[cfg(all(windows, feature = "negotiate", feature = "__tls"))]
+        let is_negotiate = proxy.is_negotiate();
+
         match &self.inner {
             #[cfg(feature = "__native-tls")]
             Inner::NativeTls(http, tls) => {
                 if dst.scheme() == Some(&Scheme::HTTPS) {
+                    // Negotiate (SPNEGO/Kerberos) proxy tunnel
+                    #[cfg(all(windows, feature = "negotiate"))]
+                    if is_negotiate {
+                        log::trace!("tunneling HTTPS over proxy with negotiate auth");
+                        let mut http_connector = http.clone();
+                        std::future::poll_fn(|cx| http_connector.poll_ready(cx))
+                            .await
+                            .map_err(|e| -> BoxError { Box::new(e) })?;
+                        let mut proxy_conn = http_connector
+                            .call(proxy_dst.clone())
+                            .await
+                            .map_err(|e| -> BoxError { Box::new(e) })?;
+
+                        let target_host = dst.host().ok_or("no host in url")?;
+                        let target_port = dst.port_u16().unwrap_or(443);
+                        let proxy_host_name = proxy_dst.host().ok_or("no proxy host")?;
+
+                        let mut extra_headers = http::HeaderMap::new();
+                        if let Some(ref ua) = self.user_agent {
+                            extra_headers.insert(http::header::USER_AGENT, ua.clone());
+                        }
+                        if let Some(ref custom_headers) = misc {
+                            extra_headers.extend(
+                                custom_headers.iter().map(|(k, v)| (k.clone(), v.clone())),
+                            );
+                        }
+
+                        tunnel_negotiate_with_spn(
+                            &mut proxy_conn,
+                            target_host,
+                            target_port,
+                            proxy_host_name,
+                            &extra_headers,
+                        )
+                        .await?;
+
+                        // Wrap tunneled connection in TLS for the target
+                        let tls_connector =
+                            tokio_native_tls::TlsConnector::from(tls.clone());
+                        let io = tls_connector
+                            .connect(target_host, TokioIo::new(proxy_conn))
+                            .await?;
+                        return Ok(Conn {
+                            inner: self.verbose.wrap(NativeTlsConn {
+                                inner: TokioIo::new(io),
+                            }),
+                            is_proxy: false,
+                            tls_info: false,
+                        });
+                    }
+
                     log::trace!("tunneling HTTPS over proxy");
                     let tls_connector = tokio_native_tls::TlsConnector::from(tls.clone());
                     let inner =
                         hyper_tls::HttpsConnector::from((http.clone(), tls_connector.clone()));
-                    // TODO: we could cache constructing this
                     let mut tunnel =
                         hyper_util::client::legacy::connect::proxy::Tunnel::new(proxy_dst, inner);
                     if let Some(auth) = auth {
@@ -817,12 +870,9 @@ impl ConnectorService {
                         headers.insert(http::header::USER_AGENT, ua);
                         tunnel = tunnel.with_headers(headers);
                     }
-                    // Note that custom headers may override the user agent header.
                     if let Some(custom_headers) = misc {
                         tunnel = tunnel.with_headers(custom_headers.clone());
                     }
-                    // We don't wrap this again in an HttpsConnector since that uses Maybe,
-                    // and we know this is definitely HTTPS.
                     let tunneled = tunnel.call(dst.clone()).await?;
                     let tls_connector = tokio_native_tls::TlsConnector::from(tls.clone());
                     let io = tls_connector
@@ -848,10 +898,62 @@ impl ConnectorService {
                     use std::convert::TryFrom;
                     use tokio_rustls::TlsConnector as RustlsConnector;
 
+                    // Negotiate (SPNEGO/Kerberos) proxy tunnel
+                    #[cfg(all(windows, feature = "negotiate"))]
+                    if is_negotiate {
+                        log::trace!("tunneling HTTPS over proxy with negotiate auth");
+                        let mut http_connector = http.clone();
+                        std::future::poll_fn(|cx| http_connector.poll_ready(cx))
+                            .await
+                            .map_err(|e| -> BoxError { Box::new(e) })?;
+                        let mut proxy_conn = http_connector
+                            .call(proxy_dst.clone())
+                            .await
+                            .map_err(|e| -> BoxError { Box::new(e) })?;
+
+                        let target_host = dst.host().ok_or("no host in url")?;
+                        let target_port = dst.port_u16().unwrap_or(443);
+                        let proxy_host_name = proxy_dst.host().ok_or("no proxy host")?;
+
+                        let mut extra_headers = http::HeaderMap::new();
+                        if let Some(ref ua) = self.user_agent {
+                            extra_headers.insert(http::header::USER_AGENT, ua.clone());
+                        }
+                        if let Some(ref custom_headers) = misc {
+                            extra_headers.extend(
+                                custom_headers.iter().map(|(k, v)| (k.clone(), v.clone())),
+                            );
+                        }
+
+                        tunnel_negotiate_with_spn(
+                            &mut proxy_conn,
+                            target_host,
+                            target_port,
+                            proxy_host_name,
+                            &extra_headers,
+                        )
+                        .await?;
+
+                        // Wrap tunneled connection in TLS for the target
+                        let host = target_host.to_string();
+                        let server_name = ServerName::try_from(host.as_str().to_owned())
+                            .map_err(|_| "Invalid Server Name")?;
+                        let io = RustlsConnector::from(tls.clone())
+                            .connect(server_name, TokioIo::new(proxy_conn))
+                            .await?;
+
+                        return Ok(Conn {
+                            inner: self.verbose.wrap(RustlsTlsConn {
+                                inner: TokioIo::new(io),
+                            }),
+                            is_proxy: false,
+                            tls_info: false,
+                        });
+                    }
+
                     log::trace!("tunneling HTTPS over proxy");
                     let http = http.clone();
                     let inner = hyper_rustls::HttpsConnector::from((http, tls_proxy.clone()));
-                    // TODO: we could cache constructing this
                     let mut tunnel =
                         hyper_util::client::legacy::connect::proxy::Tunnel::new(proxy_dst, inner);
                     if let Some(auth) = auth {
@@ -865,8 +967,6 @@ impl ConnectorService {
                         headers.insert(http::header::USER_AGENT, ua);
                         tunnel = tunnel.with_headers(headers);
                     }
-                    // We don't wrap this again in an HttpsConnector since that uses Maybe,
-                    // and we know this is definitely HTTPS.
                     let tunneled = tunnel.call(dst.clone()).await?;
                     let host = dst.host().ok_or("no host in url")?.to_string();
                     let server_name = ServerName::try_from(host.as_str().to_owned())
@@ -1283,6 +1383,201 @@ impl<T: AsyncConn + TlsInfoFactory> AsyncConnWithInfo for T {}
 impl<T: AsyncConn> AsyncConnWithInfo for T {}
 
 type BoxConn = Box<dyn AsyncConnWithInfo>;
+
+/// Perform an HTTP CONNECT tunnel with Negotiate (SPNEGO/Kerberos) authentication.
+///
+/// On the raw TCP connection to the proxy:
+/// 1. Sends CONNECT without auth
+/// 2. If proxy returns 407 + `Proxy-Authenticate: Negotiate`, performs SSPI handshake
+/// 3. Resends CONNECT with `Proxy-Authorization: Negotiate <token>`
+/// 4. Repeats until 200 or failure
+///
+/// `proxy_host` is used to derive the SPN (`HTTP/<proxy_host>`) for Kerberos auth.
+#[cfg(all(windows, feature = "negotiate", feature = "__tls"))]
+async fn tunnel_negotiate_with_spn<T>(
+    conn: &mut T,
+    target_host: &str,
+    target_port: u16,
+    proxy_host: &str,
+    extra_headers: &http::HeaderMap,
+) -> Result<(), BoxError>
+where
+    T: Read + Write + Unpin,
+{
+    use hyper::rt::ReadBuf;
+    use base64::Engine as _;
+    use crate::auth::{Credentials, sspi::SspiContext};
+
+    const MAX_ROUNDS: usize = 5;
+
+    // I/O helpers matching hyper-util's rt::io pattern
+    async fn write_all<W: Write + Unpin>(io: &mut W, mut buf: &[u8]) -> io::Result<()> {
+        while !buf.is_empty() {
+            let n = std::future::poll_fn(|cx| Pin::new(&mut *io).poll_write(cx, buf)).await?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "write zero"));
+            }
+            buf = &buf[n..];
+        }
+        std::future::poll_fn(|cx| Pin::new(&mut *io).poll_flush(cx)).await
+    }
+
+    async fn read_some<R: Read + Unpin>(io: &mut R, buf: &mut [u8]) -> io::Result<usize> {
+        std::future::poll_fn(move |cx| {
+            let mut read_buf = ReadBuf::new(buf);
+            std::task::ready!(Pin::new(&mut *io).poll_read(cx, read_buf.unfilled()))?;
+            Poll::Ready(Ok(read_buf.filled().len()))
+        })
+        .await
+    }
+
+    fn build_connect(
+        host: &str,
+        port: u16,
+        extra_headers: &http::HeaderMap,
+        auth: Option<&str>,
+    ) -> Vec<u8> {
+        let mut buf = format!("CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n");
+        if let Some(auth_val) = auth {
+            buf.push_str(&format!("Proxy-Authorization: {auth_val}\r\n"));
+        }
+        for (name, value) in extra_headers {
+            if let Ok(v) = value.to_str() {
+                buf.push_str(&format!("{}: {v}\r\n", name.as_str()));
+            }
+        }
+        buf.push_str("\r\n");
+        buf.into_bytes()
+    }
+
+    fn find_header_end(buf: &[u8]) -> Option<usize> {
+        for i in 0..buf.len().saturating_sub(3) {
+            if &buf[i..i + 4] == b"\r\n\r\n" {
+                return Some(i + 4);
+            }
+        }
+        None
+    }
+
+    async fn read_response<R: Read + Unpin>(
+        io: &mut R,
+    ) -> Result<(u16, Option<String>), BoxError> {
+        let mut buf = [0u8; 8192];
+        let mut pos = 0;
+
+        loop {
+            if pos >= buf.len() {
+                return Err("proxy response headers too long".into());
+            }
+            let n = read_some(io, &mut buf[pos..]).await?;
+            if n == 0 {
+                return Err("unexpected EOF from proxy during CONNECT".into());
+            }
+            pos += n;
+
+            let recvd = &buf[..pos];
+            if let Some(header_end) = find_header_end(recvd) {
+                let header_str = std::str::from_utf8(&recvd[..header_end])
+                    .map_err(|_| "proxy sent invalid UTF-8 response")?;
+
+                let status = header_str
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .ok_or("invalid proxy response status line")?;
+
+                let proxy_auth = header_str
+                    .lines()
+                    .find(|line| line.to_lowercase().starts_with("proxy-authenticate:"))
+                    .map(|line| line[line.find(':').unwrap() + 1..].trim().to_string());
+
+                return Ok((status, proxy_auth));
+            }
+        }
+    }
+
+    fn extract_negotiate_token(header_val: &str) -> Result<Option<Vec<u8>>, BoxError> {
+        let after = header_val
+            .strip_prefix("Negotiate")
+            .or_else(|| header_val.strip_prefix("negotiate"))
+            .ok_or("not a Negotiate challenge")?;
+        let trimmed = after.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(trimmed)
+            .map_err(|e| format!("invalid base64 in Proxy-Authenticate: {e}"))?;
+        Ok(Some(decoded))
+    }
+
+    let spn = format!("HTTP/{proxy_host}");
+
+    // 1. Send initial CONNECT (no auth)
+    let req = build_connect(target_host, target_port, extra_headers, None);
+    write_all(conn, &req).await?;
+
+    let (status, proxy_auth) = read_response(conn).await?;
+
+    if status == 200 {
+        return Ok(());
+    }
+
+    if status != 407 {
+        return Err(format!("proxy CONNECT failed with status {status}").into());
+    }
+
+    // 2. Check for Negotiate challenge
+    let proxy_auth_val =
+        proxy_auth.ok_or("proxy returned 407 without Proxy-Authenticate header")?;
+    if !proxy_auth_val.to_lowercase().starts_with("negotiate") {
+        return Err(
+            format!("proxy requires unsupported auth method: {proxy_auth_val}").into(),
+        );
+    }
+
+    let server_token = extract_negotiate_token(&proxy_auth_val)?;
+
+    // 3. SPNEGO handshake loop
+    let mut ctx = SspiContext::new("Negotiate");
+    ctx.acquire_credentials(&Credentials::CurrentUser)
+        .map_err(|code| format!("SSPI AcquireCredentials failed: 0x{code:08X}"))?;
+
+    let mut input_token = server_token;
+
+    for _round in 0..MAX_ROUNDS {
+        let (output_token, _is_complete) = ctx
+            .initialize_context(&spn, input_token.as_deref())
+            .map_err(|code| format!("SSPI InitializeSecurityContext failed: 0x{code:08X}"))?;
+
+        let token_b64 = base64::engine::general_purpose::STANDARD.encode(&output_token);
+        let auth_header = format!("Negotiate {token_b64}");
+
+        let req = build_connect(target_host, target_port, extra_headers, Some(&auth_header));
+        write_all(conn, &req).await?;
+
+        let (status, proxy_auth) = read_response(conn).await?;
+
+        if status == 200 {
+            return Ok(());
+        }
+
+        if status != 407 {
+            return Err(
+                format!("proxy CONNECT failed with status {status} during negotiate").into(),
+            );
+        }
+
+        let auth_val = proxy_auth.ok_or("proxy returned 407 without Proxy-Authenticate")?;
+        input_token = extract_negotiate_token(&auth_val)?;
+        if input_token.is_none() {
+            return Err("proxy returned 407 without negotiate token for next round".into());
+        }
+    }
+
+    Err("proxy negotiate: too many authentication rounds".into())
+}
 
 pub(crate) mod sealed {
     use super::*;

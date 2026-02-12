@@ -8,7 +8,7 @@
 #![allow(unused)]
 
 #[cfg(all(windows, feature = "negotiate"))]
-mod sspi;
+pub(crate) mod sspi;
 
 #[cfg(feature = "negotiate")]
 mod negotiate;

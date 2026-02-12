@@ -2675,19 +2675,21 @@ impl Client {
         #[cfg(feature = "negotiate")]
         let negotiate_config = self.inner.negotiate_config.clone();
 
-        let pending = self.execute_request(request);
+        let self_ = self.clone();
 
         async move {
             #[cfg(feature = "negotiate")]
             {
-                if let Some(_config) = negotiate_config {
-                    // Negotiate is enabled - but we need to integrate this differently
-                    // For now, just return the pending result
-                    // TODO: Properly integrate negotiate authentication
-                    return pending.await;
+                if let Some(config) = negotiate_config {
+                    return crate::auth::execute_with_negotiate(
+                        request,
+                        &config.credentials,
+                        |req| self_.execute_request(req),
+                    )
+                    .await;
                 }
             }
-            pending.await
+            self_.execute_request(request).await
         }
     }
 

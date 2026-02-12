@@ -69,6 +69,7 @@ pub struct NoProxy {
 struct Extra {
     auth: Option<HeaderValue>,
     misc: Option<HeaderMap>,
+    negotiate: bool,
 }
 
 // ===== Internal =====
@@ -267,6 +268,7 @@ impl Proxy {
             extra: Extra {
                 auth: None,
                 misc: None,
+                negotiate: false,
             },
             intercept,
             no_proxy: None,
@@ -297,6 +299,17 @@ impl Proxy {
             }
         }
 
+        self
+    }
+
+    /// Enable Negotiate (Kerberos/SPNEGO) authentication for this proxy.
+    ///
+    /// Uses the current Windows user's Kerberos credentials (SSO) to
+    /// authenticate with the proxy during the CONNECT handshake.
+    ///
+    /// This is equivalent to `curl --proxy-negotiate -u :`.
+    pub fn negotiate_auth(mut self) -> Proxy {
+        self.extra.negotiate = true;
         self
     }
 
@@ -518,6 +531,7 @@ impl Matcher {
             extra: Extra {
                 auth: None,
                 misc: None,
+                negotiate: false,
             },
             // maybe env vars have auth!
             maybe_has_http_auth: true,
@@ -603,6 +617,10 @@ impl Intercepted {
             return Some(val);
         }
         None
+    }
+
+    pub(crate) fn is_negotiate(&self) -> bool {
+        self.extra.negotiate
     }
 
     #[cfg(feature = "socks")]
